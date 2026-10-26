@@ -1,0 +1,277 @@
+name: build
+
+# The whole pipeline, on GitHub's arm64 runners:
+#   checks  shell/python syntax, and patches/series against kernel.org's linux tarball
+#   kernel  kernel/build-rpm.sh in fedora:$FEDORA_RELEASE, only when its release
+#           (kernel-<uname>) does not exist yet; published as that release on main
+#   iptsd   the same for iptsd/iptsd.spec (release iptsd-<version>-<release>)
+#   image   image/Containerfile with those RPMs, pushed to ghcr.io on main
+#   disk    the raw USB image from the pushed image (bootc-image-builder), by hand
+# A release is built once per name: changing kernel/ without bumping SL7_BUILDID in
+# kernel/version.conf fails the versions job instead of silently reusing the old build.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Mondays: rebuild the image on the latest Kinoite (Fedora updates).
+    - cron: '17 5 * * 1'
+  workflow_dispatch:
+    inputs:
+      disk:
+        description: 'Also build the raw USB disk image (artifact)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/fedoraforsnapdragon
+  PUBLISH: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Syntax
+        run: |
+          shopt -s globstar
+          bash -n kernel/*.sh iptsd/*.sh image/*.sh image/files/usr/libexec/sl7/* image/files/usr/bin/*
+          shellcheck -S warning kernel/*.sh iptsd/*.sh image/*.sh image/files/usr/libexec/sl7/* image/files/usr/bin/*
+          python3 -m py_compile kernel/check-dtbloader.py
+      - name: Patch series against linux-7.3 (fuzz 0)
+        run: |
+          curl -fsSL https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.3.tar.xz | tar -xJ
+          cd linux-7.3
+          while read -r p; do
+            [[ -z $p || $p == \#* ]] && continue
+            patch --batch --forward --fuzz=0 --no-backup-if-mismatch -p1 -i "../kernel/patches/$p" > /dev/null || { echo "::error::$p does not apply"; exit 1; }
+            echo "ok $p"
+          done < ../kernel/patches/series
+
+  versions:
+    runs-on: ubuntu-24.04
+    outputs:
+      fedora: ${{ steps.v.outputs.fedora }}
+      kernel_tag: ${{ steps.v.outputs.kernel_tag }}
+      kernel_inputs: ${{ steps.v.outputs.kernel_inputs }}
+      kernel_built: ${{ steps.v.outputs.kernel_built }}
+      iptsd_tag: ${{ steps.v.outputs.iptsd_tag }}
+      iptsd_inputs: ${{ steps.v.outputs.iptsd_inputs }}
+      iptsd_built: ${{ steps.v.outputs.iptsd_built }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # shellcheck disable=SC1091
+          . kernel/version.conf
+          nvr=${KERNEL_SRPM#kernel-}
+          rel=${nvr##*-}
+          kernel_tag="kernel-${nvr%-*}-${rel%%.fc*}$SL7_BUILDID.fc$FEDORA_RELEASE"
+          iptsd_version=$(sed -n 's/^Version: *//p' iptsd/iptsd.spec)
+          iptsd_release=$(sed -n 's/^Release: *\([0-9.]*[0-9]\).*/\1/p' iptsd/iptsd.spec)
+          iptsd_commit=$(sed -n 's/^%global commit \(.......\).*/\1/p' iptsd/iptsd.spec)
+          iptsd_tag="iptsd-$iptsd_version-$iptsd_release.git$iptsd_commit.fc$FEDORA_RELEASE"
+          inputs() { find "$1" -type f ! -path "$1/work/*" ! -path "$1/out/*" -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1; }
+          # true: the release exists and was built from these exact inputs.
+          built() {
+            local published
+            gh release view "$1" > /dev/null 2>&1 || { echo false; return 0; }
+            published=$(gh release download "$1" --pattern inputs.sha256 --output - 2> /dev/null || true)
+            [[ $published == "$2" ]] || { echo "::error::$1 exists but was built from other inputs: bump $3" >&2; return 1; }
+            echo true
+          }
+          kernel_inputs=$(inputs kernel)
+          iptsd_inputs=$(inputs iptsd)
+          kernel_built=$(built "$kernel_tag" "$kernel_inputs" 'SL7_BUILDID in kernel/version.conf')
+          iptsd_built=$(built "$iptsd_tag" "$iptsd_inputs" 'the Release number in iptsd/iptsd.spec')
+          {
+            echo "fedora=$FEDORA_RELEASE"
+            echo "kernel_tag=$kernel_tag"
+            echo "kernel_inputs=$kernel_inputs"
+            echo "kernel_built=$kernel_built"
+            echo "iptsd_tag=$iptsd_tag"
+            echo "iptsd_inputs=$iptsd_inputs"
+            echo "iptsd_built=$iptsd_built"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  kernel:
+    needs: [checks, versions]
+    if: needs.versions.outputs.kernel_built != 'true'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 360
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          df -h /
+      - name: ccache
+        uses: actions/cache@v4
+        with:
+          path: ccache
+          key: ccache-${{ needs.versions.outputs.kernel_tag }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ needs.versions.outputs.kernel_tag }}-
+            ccache-kernel-
+      - name: Build
+        run: |
+          mkdir -p ccache
+          docker run --rm -v "$PWD:/src" -w /src -e CCACHE_DIR=/src/ccache -e CCACHE_MAXSIZE=4G \
+            "registry.fedoraproject.org/fedora:${{ needs.versions.outputs.fedora }}" \
+            bash kernel/build-rpm.sh --install-deps
+          sudo chown -R "$(id -u):$(id -g)" kernel ccache
+          echo "${{ needs.versions.outputs.kernel_inputs }}" > kernel/out/inputs.sha256
+          df -h /
+      - uses: actions/upload-artifact@v7
+        with:
+          name: kernel-rpms
+          path: |
+            kernel/out/*.rpm
+            kernel/out/SHA256SUMS
+            kernel/out/inputs.sha256
+          if-no-files-found: error
+      - name: Publish release
+        if: env.PUBLISH == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.versions.outputs.kernel_tag }}
+        run: |
+          gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" \
+            --notes "Surface Laptop 7 kernel RPMs (Fedora ${{ needs.versions.outputs.fedora }}, aarch64), built by the build workflow from kernel/ at $GITHUB_SHA. Not signed for Secure Boot." \
+            kernel/out/*.aarch64.rpm kernel/out/SHA256SUMS kernel/out/inputs.sha256
+
+  iptsd:
+    needs: [checks, versions]
+    if: needs.versions.outputs.iptsd_built != 'true'
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src "registry.fedoraproject.org/fedora:${{ needs.versions.outputs.fedora }}" \
+            bash iptsd/build-rpm.sh --install-deps
+          sudo chown -R "$(id -u):$(id -g)" iptsd
+          echo "${{ needs.versions.outputs.iptsd_inputs }}" > iptsd/out/inputs.sha256
+      - uses: actions/upload-artifact@v7
+        with:
+          name: iptsd-rpms
+          path: |
+            iptsd/out/*.rpm
+            iptsd/out/SHA256SUMS
+            iptsd/out/inputs.sha256
+          if-no-files-found: error
+      - name: Publish release
+        if: env.PUBLISH == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.versions.outputs.iptsd_tag }}
+        run: |
+          gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" \
+            --notes "iptsd (alex-lentz fork, Surface Laptop 7 haptic touchpad) for Fedora ${{ needs.versions.outputs.fedora }} aarch64, from iptsd/ at $GITHUB_SHA." \
+            iptsd/out/*.rpm iptsd/out/SHA256SUMS iptsd/out/inputs.sha256
+
+  image:
+    needs: [versions, kernel, iptsd]
+    # Runs when the RPM jobs succeeded or were skipped because their releases exist.
+    if: >-
+      always() && needs.versions.result == 'success'
+      && (needs.kernel.result == 'success' || needs.kernel.result == 'skipped')
+      && (needs.iptsd.result == 'success' || needs.iptsd.result == 'skipped')
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: Kernel RPMs (this run)
+        if: needs.kernel.result == 'success'
+        uses: actions/download-artifact@v5
+        with:
+          name: kernel-rpms
+          path: image/rpms
+      - name: iptsd RPMs (this run)
+        if: needs.iptsd.result == 'success'
+        uses: actions/download-artifact@v5
+        with:
+          name: iptsd-rpms
+          path: image/rpms
+      - name: RPMs from releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p image/rpms
+          if [[ ${{ needs.kernel.result }} == skipped ]]; then
+            gh release download "${{ needs.versions.outputs.kernel_tag }}" --dir image/rpms --pattern '*.rpm'
+          fi
+          if [[ ${{ needs.iptsd.result }} == skipped ]]; then
+            gh release download "${{ needs.versions.outputs.iptsd_tag }}" --dir image/rpms --pattern '*.aarch64.rpm'
+          fi
+          rm -f image/rpms/*.src.rpm image/rpms/*-debug*.rpm
+          ls -l image/rpms
+      - name: Build
+        run: |
+          command -v podman > /dev/null || { sudo apt-get update && sudo apt-get install -y podman; }
+          sudo podman build --pull=newer --build-arg FEDORA_RELEASE=${{ needs.versions.outputs.fedora }} \
+            -f image/Containerfile -t localhost/sl7-kinoite .
+      - name: Push
+        if: env.PUBLISH == 'true'
+        run: |
+          image=${IMAGE,,}
+          fedora=${{ needs.versions.outputs.fedora }}
+          stamp=$(date -u +%Y%m%d)
+          echo "${{ github.token }}" | sudo podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+          for tag in "$fedora" latest "$fedora.$stamp" "$fedora.$stamp.${GITHUB_SHA::7}"; do
+            sudo podman push localhost/sl7-kinoite "docker://$image:$tag"
+          done
+          echo "Pushed $image:$fedora ($fedora.$stamp.${GITHUB_SHA::7})" >> "$GITHUB_STEP_SUMMARY"
+
+  disk:
+    needs: [versions, image]
+    if: always() && needs.image.result == 'success' && github.event_name == 'workflow_dispatch' && inputs.disk
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v5
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          df -h /
+      - name: Raw disk image
+        run: |
+          command -v podman > /dev/null || { sudo apt-get update && sudo apt-get install -y podman; }
+          image=${IMAGE,,}:${{ needs.versions.outputs.fedora }}
+          sudo podman pull "$image"
+          mkdir -p out
+          sudo podman run --rm --privileged --pull=newer --security-opt label=type:unconfined_t \
+            -v "$PWD/disk/config.toml:/config.toml:ro" -v "$PWD/out:/output" \
+            -v /var/lib/containers/storage:/var/lib/containers/storage \
+            quay.io/centos-bootc/bootc-image-builder:latest \
+            --type raw --rootfs ext4 "$image"
+          sudo chown -R "$(id -u):$(id -g)" out
+          raw=$(find out -name '*.raw' | head -n 1)
+          name=sl7-kinoite-${{ needs.versions.outputs.fedora }}-$(date -u +%Y%m%d)-${GITHUB_SHA::7}.raw
+          mv "$raw" "out/$name"
+          xz -T0 -3 "out/$name"
+          (cd out && sha256sum "$name.xz" > "$name.xz.sha256" && cat "$name.xz.sha256")
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sl7-kinoite-raw
+          path: |
+            out/*.raw.xz
+            out/*.sha256
+          compression-level: 0
+          if-no-files-found: error
