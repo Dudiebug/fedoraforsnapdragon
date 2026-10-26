@@ -149,15 +149,28 @@ jobs:
             kernel/out/SHA256SUMS
             kernel/out/inputs.sha256
           if-no-files-found: error
+  # Its own short job: publishing from the end of the 90-minute build job was refused
+  # (HTTP 403 on release creation) while the 2-minute iptsd job's identical step worked.
+  kernel-release:
+    needs: [versions, kernel]
+    if: needs.kernel.result == 'success' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: kernel-rpms
+          path: rpms
       - name: Publish release
-        if: env.PUBLISH == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.versions.outputs.kernel_tag }}
         run: |
-          gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" \
+          (cd rpms && sha256sum -c SHA256SUMS)
+          gh release create "$TAG" -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$TAG" \
             --notes "Surface Laptop 7 kernel RPMs (Fedora ${{ needs.versions.outputs.fedora }}, aarch64), built by the build workflow from kernel/ at $GITHUB_SHA. Not signed for Secure Boot." \
-            kernel/out/*.aarch64.rpm kernel/out/SHA256SUMS kernel/out/inputs.sha256
+            rpms/*.aarch64.rpm rpms/SHA256SUMS rpms/inputs.sha256
 
   iptsd:
     needs: [checks, versions]
