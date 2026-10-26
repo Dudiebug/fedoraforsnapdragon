@@ -8,6 +8,7 @@
 # Storage, user and time are left interactive: nothing is partitioned automatically,
 # so Windows stays unless you remove it yourself in the storage screen.
 #
+# Ubuntu's podman 4.9 has no COPY heredocs, so the small files sit next to this one.
 # After osbuild/bootc-foundry stream10-installer and image-builder's generic-iso docs.
 # Built by the build workflow (iso input), then:
 #   image-builder build generic-iso --bootc-ref localhost/sl7-installer \
@@ -29,18 +30,7 @@ RUN dnf -y reinstall shim-aa64 grub2-efi-aa64 && \
     for d in /usr/lib/efi/*/*/EFI /usr/lib/bootupd/updates/EFI; do [ -d "$d" ] && cp -a "$d" /boot/efi/; done; \
     ls -R /boot/efi/EFI && test -e /boot/efi/EFI/fedora/shimaa64.efi && test -e /boot/efi/EFI/fedora/gcdaa64.efi
 
-RUN mkdir -p /usr/lib/image-builder/bootc
-# The kernel arguments the installed system gets from kargs.d, so the installer's
-# display and USB survive until their drivers load. No "quiet": a failed boot shows why.
-COPY <<EOT /usr/lib/image-builder/bootc/iso.yaml
-label: "SL7-Kinoite-Installer"
-grub2:
-  timeout: 10
-  entries:
-    - name: "Install Fedora Kinoite for the Surface Laptop 7"
-      linux: "/images/pxeboot/vmlinuz inst.stage2=hd:LABEL=SL7-Kinoite-Installer inst.graphical selinux=0 clk_ignore_unused pd_ignore_unused systemd.tpm2_wait=0"
-      initrd: "/images/pxeboot/initrd.img"
-EOT
+COPY installer/iso.yaml /usr/lib/image-builder/bootc/iso.yaml
 
 # Payload: the embedded image; updates then come from GHCR.
 RUN printf 'bootc --source-imgref containers-storage:%s --target-imgref %s\n' "$IMAGE" "$IMAGE" \
@@ -59,11 +49,7 @@ RUN echo "install:x:0:0:root:/root:/usr/libexec/anaconda/run-anaconda" >> /etc/p
     systemctl disable sl7-firmware-setup.service sl7-flatpak-setup.service && \
     (systemctl disable plasma-setup.service || true)
 
-RUN mkdir -p /usr/lib/systemd/logind.conf.d
-COPY <<EOT /usr/lib/systemd/logind.conf.d/anaconda-shell.conf
-[Login]
-ReserveVT=2
-EOT
+COPY installer/anaconda-shell.conf /usr/lib/systemd/logind.conf.d/anaconda-shell.conf
 
 # Anaconda runs as root; let it have PipeWire.
 RUN mkdir -p /etc/systemd/user/pipewire.service.d /etc/systemd/user/pipewire.socket.d && \
