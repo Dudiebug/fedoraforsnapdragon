@@ -1,0 +1,4 @@
+# Surface Laptop 7: hide the raw spi-hid touchpad (spi19, platform 88c000) from libinput.
+# iptsd reads it and provides the "IPTSD Virtual Touchpad" with the haptic force click;
+# two touchpads would double every gesture. From 1Martin11/surface-laptop-7-fedora.
+ACTION!="remove", SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_PATH}=="platform-88c000.spi-cs-0", ENV{ID_INPUT_TOUCHPAD}=="1", ENV{LIBINPUT_IGNORE_DEVICE}="1"

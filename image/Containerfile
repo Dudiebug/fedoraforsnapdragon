@@ -1,0 +1,21 @@
+# Fedora Kinoite for the Surface Laptop 7 (Snapdragon X, aarch64), as a bootc image.
+# Build context: the repository root. CI first puts the kernel and iptsd RPMs into
+# image/rpms/ (from the kernel-* and iptsd-* GitHub releases); see
+# .github/workflows/build.yml.
+#   podman build --platform linux/arm64 --build-arg FEDORA_RELEASE=44 -f image/Containerfile -t sl7-kinoite .
+ARG FEDORA_RELEASE=44
+FROM quay.io/fedora-ostree-desktops/kinoite:${FEDORA_RELEASE}
+
+COPY image/rpms/ /tmp/rpms/
+COPY image/build.sh /tmp/build.sh
+COPY image/files/ /
+COPY docs/ /usr/share/doc/sl7/
+RUN bash /tmp/build.sh && rm -rf /tmp/rpms /tmp/build.sh
+
+LABEL org.opencontainers.image.title="Fedora Kinoite for the Surface Laptop 7" \
+      org.opencontainers.image.description="Fedora Atomic KDE (bootc) with the Snapdragon X Surface Laptop 7 kernel, firmware setup and touch support" \
+      org.opencontainers.image.source="https://github.com/Dudiebug/fedoraforsnapdragon" \
+      containers.bootc=1 \
+      ostree.bootable=1
+
+RUN bootc container lint

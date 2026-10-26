@@ -1,0 +1,6 @@
+# bootc-image-builder settings for the raw USB test image (--type raw --rootfs ext4).
+# 12 GiB root + ESP + /boot comes to about 13.5 GiB, so it fits a 16 GB stick.
+# No user is baked in: plasma-setup asks for one on the first boot.
+[[customizations.filesystem]]
+mountpoint = "/"
+minsize = "12 GiB"

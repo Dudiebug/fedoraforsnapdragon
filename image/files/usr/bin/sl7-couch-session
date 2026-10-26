@@ -1,0 +1,21 @@
+#!/bin/bash
+# Couch mode: a gamescope session that runs one full-screen streaming client, picked
+# in SDDM next to Plasma (which stays the default). Quitting the client ends the
+# session and returns to the login screen.
+#   SL7_COUCH_APP  Flatpak app id to run (default Moonlight; chiaki-ng is
+#                  io.github.streetpea.Chiaki4deck). Set it in ~/.config/sl7-couch.conf.
+# gamescope runs on the DRM backend at the panel's native mode, on turnip (Vulkan).
+set -u
+
+conf=${XDG_CONFIG_HOME:-$HOME/.config}/sl7-couch.conf
+# shellcheck source=/dev/null
+[[ -f $conf ]] && source "$conf"
+app=${SL7_COUCH_APP:-com.moonlight_stream.Moonlight}
+
+if ! flatpak info "$app" > /dev/null 2>&1; then
+  # First boot without network: show why instead of a black screen.
+  exec gamescope -f -- kdialog --title 'Couch mode' --error \
+    "$app is not installed yet. Log in to Plasma once with a network connection (it installs on first boot), or run: flatpak install flathub $app"
+fi
+
+exec gamescope -f -e -- flatpak run "$app"

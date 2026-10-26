@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=Couch mode (Moonlight)
+Comment=Full-screen game streaming in gamescope; log out to return to Plasma
+Exec=/usr/bin/sl7-couch-session
+Type=Application
+DesktopNames=gamescope

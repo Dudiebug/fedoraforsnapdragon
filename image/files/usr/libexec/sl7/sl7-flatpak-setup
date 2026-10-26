@@ -1,0 +1,13 @@
+#!/bin/bash
+# First boot: add Flathub and install the streaming clients system-wide. Flatpaks live
+# in /var, which an image cannot carry, so this runs on the laptop. Retries on every
+# boot until it succeeds (no network on the first boot is normal).
+set -Eeuo pipefail
+
+APPS=(com.moonlight_stream.Moonlight io.github.streetpea.Chiaki4deck)
+DONE=/var/lib/sl7/flatpak-setup.done
+
+flatpak remote-add --system --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+flatpak install --system --noninteractive --or-update flathub "${APPS[@]}"
+mkdir -p "${DONE%/*}"
+touch "$DONE"

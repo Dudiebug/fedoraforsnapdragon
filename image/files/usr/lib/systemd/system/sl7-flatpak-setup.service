@@ -1,0 +1,13 @@
+[Unit]
+Description=Surface Laptop 7: install Moonlight and chiaki-ng from Flathub
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=!/var/lib/sl7/flatpak-setup.done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/sl7/sl7-flatpak-setup
+TimeoutStartSec=30min
+
+[Install]
+WantedBy=multi-user.target

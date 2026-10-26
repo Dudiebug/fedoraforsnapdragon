@@ -1,0 +1,9 @@
+# Surface Laptop 7 kernel arguments, applied by bootc install and bootc upgrade.
+#  firmware_class.path  the Microsoft/Qualcomm firmware lives in /var (sl7-firmware-setup);
+#                       /usr stays read-only
+#  clk_ignore_unused, pd_ignore_unused
+#                       keep the clocks and power domains UEFI left on (display, USB) until
+#                       their drivers take them over; the X1E community default
+#  systemd.tpm2_wait=0  do not wait for a TPM that Linux cannot reach on this machine
+match-architectures = ["aarch64"]
+kargs = ["firmware_class.path=/var/lib/firmware", "clk_ignore_unused", "pd_ignore_unused", "systemd.tpm2_wait=0"]
