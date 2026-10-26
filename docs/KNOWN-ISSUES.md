@@ -20,5 +20,5 @@ from the code and from other SL7 projects, per hardware item.
 | Camera | no | the CAMSS nodes arrive with 7.4 (patch 0022 is held in `series`) |
 | Fingerprint, TPM | no | |
 | Secure Boot | must be off | the kernel is unsigned |
-| Installer ISO | not built | bootc-image-builder's Anaconda ISO uses Fedora's stock installer kernel, which cannot boot this laptop. Follow-up: an installer image built from this image (our kernel), or `bootc install` from the USB system |
+| Installer ISO | built on request, untested | built from this image (our kernel, offline payload). A bootc system installed by Anaconda fails `systemd-remount-fs.service` (known upstream, harmless) |
 | Couch mode | Moonlight in gamescope | the full CouchLiteOS launcher is not ported yet |

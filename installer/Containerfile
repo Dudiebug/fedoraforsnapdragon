@@ -1,0 +1,79 @@
+# Installer ISO environment for the Surface Laptop 7 Kinoite image.
+#
+# Built FROM the image itself, so the ISO boots the same SL7 kernel (the dtbloader
+# vmlinuz that picks romulus13-spi-touch by SMBIOS hardware ID) with the same initramfs
+# drivers: keyboard, touchpad, USB-A, NVMe. A stock Fedora installer kernel cannot
+# start this laptop. Anaconda then installs the image, which is embedded in the ISO
+# (no network needed), and points it at GHCR for `bootc upgrade`.
+# Storage, user and time are left interactive: nothing is partitioned automatically,
+# so Windows stays unless you remove it yourself in the storage screen.
+#
+# After osbuild/bootc-foundry stream10-installer and image-builder's generic-iso docs.
+# Built by the build workflow (iso input), then:
+#   image-builder build generic-iso --bootc-ref localhost/sl7-installer \
+#     --bootc-installer-payload-ref ghcr.io/dudiebug/fedoraforsnapdragon:44 --bootc-default-fs ext4
+ARG IMAGE=ghcr.io/dudiebug/fedoraforsnapdragon:44
+FROM ${IMAGE}
+ARG IMAGE
+
+# The ISO contract wants shim and GRUB under /boot/efi; bootc images keep them in
+# /usr (bootupd). Reinstall, then copy wherever this release put them.
+RUN dnf -y reinstall shim-aa64 grub2-efi-aa64 && \
+    dnf -y install \
+      anaconda anaconda-install-img-deps anaconda-dracut dracut-config-generic dracut-network \
+      net-tools grub2-efi-aa64-cdboot plymouth \
+      default-fonts-core-sans default-fonts-other-sans google-noto-sans-cjk-fonts \
+      xorriso squashfs-tools isomd5sum fuse-overlayfs jq && \
+    dnf clean all && \
+    mkdir -p /boot/efi && \
+    for d in /usr/lib/efi/*/*/EFI /usr/lib/bootupd/updates/EFI; do [ -d "$d" ] && cp -a "$d" /boot/efi/; done; \
+    ls -R /boot/efi/EFI && test -e /boot/efi/EFI/fedora/shimaa64.efi && test -e /boot/efi/EFI/fedora/gcdaa64.efi
+
+RUN mkdir -p /usr/lib/image-builder/bootc
+# The kernel arguments the installed system gets from kargs.d, so the installer's
+# display and USB survive until their drivers load. No "quiet": a failed boot shows why.
+COPY <<EOT /usr/lib/image-builder/bootc/iso.yaml
+label: "SL7-Kinoite-Installer"
+grub2:
+  timeout: 10
+  entries:
+    - name: "Install Fedora Kinoite for the Surface Laptop 7"
+      linux: "/images/pxeboot/vmlinuz inst.stage2=hd:LABEL=SL7-Kinoite-Installer inst.graphical selinux=0 clk_ignore_unused pd_ignore_unused systemd.tpm2_wait=0"
+      initrd: "/images/pxeboot/initrd.img"
+EOT
+
+# Payload: the embedded image; updates then come from GHCR.
+RUN printf 'bootc --source-imgref containers-storage:%s --target-imgref %s\n' "$IMAGE" "$IMAGE" \
+      > /usr/share/anaconda/interactive-defaults.ks && cat /usr/share/anaconda/interactive-defaults.ks
+
+# What lorax normally does for an installer environment (bare minimum).
+RUN echo "install:x:0:0:root:/root:/usr/libexec/anaconda/run-anaconda" >> /etc/passwd && \
+    echo "install::14438:0:99999:7:::" >> /etc/shadow && \
+    passwd -d root && \
+    mv /usr/share/anaconda/list-harddrives-stub /usr/bin/list-harddrives && \
+    mv /etc/yum.repos.d /etc/anaconda.repos.d && \
+    ln -sf /lib/systemd/system/anaconda.target /etc/systemd/system/default.target && \
+    rm -fv /usr/lib/systemd/system-generators/systemd-gpt-auto-generator && \
+    rm -f /usr/lib/systemd/system/autovt@.service && \
+    ln -s /usr/lib/systemd/system/anaconda-shell@.service /usr/lib/systemd/system/autovt@.service && \
+    systemctl disable sl7-firmware-setup.service sl7-flatpak-setup.service && \
+    (systemctl disable plasma-setup.service || true)
+
+RUN mkdir -p /usr/lib/systemd/logind.conf.d
+COPY <<EOT /usr/lib/systemd/logind.conf.d/anaconda-shell.conf
+[Login]
+ReserveVT=2
+EOT
+
+# Anaconda runs as root; let it have PipeWire.
+RUN mkdir -p /etc/systemd/user/pipewire.service.d /etc/systemd/user/pipewire.socket.d && \
+    printf '[Unit]\nConditionUser=\n' > /etc/systemd/user/pipewire.service.d/allowroot.conf && \
+    printf '[Unit]\nConditionUser=\n' > /etc/systemd/user/pipewire.socket.d/allowroot.conf
+
+# Initramfs with the Anaconda and live-boot modules, on top of the SL7 dracut config
+# (keyboard and touch in, firmware-loading drivers out).
+RUN kver=$(ls /usr/lib/modules) && \
+    DRACUT_NO_XATTR=1 dracut --force --zstd --reproducible --no-hostonly \
+      --add anaconda --add dmsquash-live --add lvm "/usr/lib/modules/$kver/initramfs.img" "$kver" && \
+    lsinitrd "/usr/lib/modules/$kver/initramfs.img" > /tmp/initrd.txt && \
+    grep -q dmsquash /tmp/initrd.txt && grep -q spi-hid /tmp/initrd.txt && rm /tmp/initrd.txt

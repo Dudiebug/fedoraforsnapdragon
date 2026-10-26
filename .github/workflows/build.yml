@@ -7,6 +7,8 @@ name: build
 #   iptsd   the same for iptsd/iptsd.spec (release iptsd-<version>-<release>)
 #   image   image/Containerfile with those RPMs, pushed to ghcr.io on main
 #   disk    the raw USB image from the pushed image (bootc-image-builder), by hand
+#   iso     the installer ISO (installer/Containerfile on top of the image, image-builder
+#           generic-iso, the image embedded for offline installs), by hand
 # A release is built once per name: changing kernel/ without bumping SL7_BUILDID in
 # kernel/version.conf fails the versions job instead of silently reusing the old build.
 
@@ -23,6 +25,15 @@ on:
         description: 'Also build the raw USB disk image (artifact)'
         type: boolean
         default: false
+      iso:
+        description: 'Also build the installer ISO (artifact)'
+        type: boolean
+        default: false
+
+# One run at a time per branch: two runs must never build and publish the same kernel.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -273,5 +284,51 @@ jobs:
           path: |
             out/*.raw.xz
             out/*.sha256
+          compression-level: 0
+          if-no-files-found: error
+
+  iso:
+    needs: [versions, image]
+    if: always() && needs.image.result == 'success' && github.event_name == 'workflow_dispatch' && inputs.iso
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v5
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          sudo docker system prune -af > /dev/null || true
+          df -h /
+      - name: Installer environment
+        run: |
+          command -v podman > /dev/null || { sudo apt-get update && sudo apt-get install -y podman; }
+          image=${IMAGE,,}:${{ needs.versions.outputs.fedora }}
+          sudo podman pull "$image"
+          sudo podman build --build-arg IMAGE="$image" -f installer/Containerfile -t localhost/sl7-installer .
+          df -h /
+      - name: ISO
+        run: |
+          image=${IMAGE,,}:${{ needs.versions.outputs.fedora }}
+          mkdir -p out
+          sudo podman run --rm --privileged --pull=newer --security-opt label=type:unconfined_t \
+            -v /var/lib/containers/storage:/var/lib/containers/storage -v "$PWD/out:/output" \
+            ghcr.io/osbuild/image-builder-cli:latest \
+            build generic-iso --bootc-ref localhost/sl7-installer --bootc-installer-payload-ref "$image" \
+            --bootc-default-fs ext4 --output-dir /output
+          sudo chown -R "$(id -u):$(id -g)" out
+          iso=$(find out -name '*.iso' | head -n 1)
+          [[ -n $iso ]] || { find out; exit 1; }
+          name=sl7-kinoite-${{ needs.versions.outputs.fedora }}-installer-$(date -u +%Y%m%d)-${GITHUB_SHA::7}.iso
+          mv "$iso" "out/$name"
+          (cd out && sha256sum "$name" > "$name.sha256" && cat "$name.sha256" && ls -lh "$name")
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sl7-kinoite-installer-iso
+          path: |
+            out/*.iso
+            out/*.iso.sha256
           compression-level: 0
           if-no-files-found: error

@@ -51,9 +51,23 @@ sudo bootc rollback       # make the previous version the default again
 The previous version is also the second entry in the GRUB menu, so a version that does
 not boot is rolled back by picking that entry once (and then `sudo bootc rollback`).
 
-## Installing to the internal SSD
+## Installing to the internal SSD (installer ISO)
 
-Not yet: only after the USB checklist in [TESTING.md](TESTING.md) passes, and only when
-you decide. An installer ISO that boots this image's own kernel is a follow-up
-(bootc-image-builder's Anaconda ISO boots Fedora's stock installer kernel, which cannot
-start this laptop).
+Only after the USB checklist in [TESTING.md](TESTING.md) passes, and only when you
+decide. The ISO is built from this image ([installer/Containerfile](../installer/Containerfile)),
+so it boots the same SL7 kernel and device tree. It carries the image inside, so it
+needs no network.
+
+1. Run the `build` workflow by hand with **iso** ticked. The artifact
+   `sl7-kinoite-installer-iso` holds `sl7-kinoite-44-installer-<date>-<commit>.iso`.
+2. Write it raw to a stick (Fedora Media Writer, Rufus in DD mode, or `dd`), boot it
+   from the USB-A port like the raw image (Volume Down + Power).
+3. Anaconda partitions nothing by itself. In Installation Destination, pick the SSD
+   and **Custom** or **Free space**: keep the Windows and EFI partitions, and install
+   into free space (shrink Windows from Windows first). Choosing "reclaim all space"
+   erases Windows.
+4. Installing writes a "Fedora" boot entry into the UEFI firmware. Windows stays in the
+   Surface boot menu and in GRUB.
+
+The installed system follows `ghcr.io/dudiebug/fedoraforsnapdragon:44` for
+`bootc upgrade`, like the USB stick.
