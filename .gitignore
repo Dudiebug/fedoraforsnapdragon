@@ -1,0 +1,14 @@
+kernel/work/
+kernel/out/
+iptsd/out/
+out/
+*.raw
+*.iso
+*.qcow2
+# Never commit firmware, driver MSIs or ACPI dumps (see README).
+*.mbn
+*.elf
+*.jsn
+*.msi
+*.aml
+*.dat
