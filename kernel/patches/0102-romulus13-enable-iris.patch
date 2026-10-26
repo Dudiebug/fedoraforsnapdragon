@@ -1,0 +1,50 @@
+From: fedoraforsnapdragon <52586739+Dudiebug@users.noreply.github.com>
+Subject: [PATCH] arm64: dts: qcom: romulus13: enable the Iris video codec
+
+Enable video-codec@aa00000 on both 13.8-inch device trees (I2C and SPI
+touchscreen), the way 0019 does for the 15-inch model, so players and
+Moonlight can use hardware H.264/HEVC decode through V4L2. Same
+Microsoft-signed qcvss8380.mbn, same Romulus firmware directory.
+
+Separate from 0101 so it can be dropped if Iris misbehaves on this unit.
+---
+diff --git a/arch/arm64/boot/dts/qcom/x1e80100-microsoft-romulus13-spi-touch.dts b/arch/arm64/boot/dts/qcom/x1e80100-microsoft-romulus13-spi-touch.dts
+index 1b43b6d4a..90e726e65 100644
+--- a/arch/arm64/boot/dts/qcom/x1e80100-microsoft-romulus13-spi-touch.dts
++++ b/arch/arm64/boot/dts/qcom/x1e80100-microsoft-romulus13-spi-touch.dts
+@@ -21,3 +21,15 @@ / {
+ #include "x1e80100-microsoft-romulus15-touchscreen.dtsi"
+ 
+ #include "x1e80100-microsoft-romulus15-gpio-power.dtsi"
++
++/*
++ * Hardware video decode and encode, as on the 15-inch model. The codec needs
++ * Microsoft-signed firmware, qcvss8380.mbn from the Windows driver store, next
++ * to the other Romulus DSP firmware. It loads on first use; until then,
++ * opening the device fails.
++ */
++&iris {
++	firmware-name = "qcom/x1e80100/microsoft/Romulus/qcvss8380.mbn";
++
++	status = "okay";
++};
+diff --git a/arch/arm64/boot/dts/qcom/x1e80100-microsoft-romulus13.dts b/arch/arm64/boot/dts/qcom/x1e80100-microsoft-romulus13.dts
+index 03dcfadc0..df4c92b8c 100644
+--- a/arch/arm64/boot/dts/qcom/x1e80100-microsoft-romulus13.dts
++++ b/arch/arm64/boot/dts/qcom/x1e80100-microsoft-romulus13.dts
+@@ -68,3 +68,15 @@ &spi19_hid0_reset_deassert {
+ &spi19_hid0_reset_assert {
+ 	pins = "gpio120";
+ };
++
++/*
++ * Hardware video decode and encode, as on the 15-inch model. The codec needs
++ * Microsoft-signed firmware, qcvss8380.mbn from the Windows driver store, next
++ * to the other Romulus DSP firmware. It loads on first use; until then,
++ * opening the device fails.
++ */
++&iris {
++	firmware-name = "qcom/x1e80100/microsoft/Romulus/qcvss8380.mbn";
++
++	status = "okay";
++};

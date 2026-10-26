@@ -1,0 +1,27 @@
+From: fedoraforsnapdragon <52586739+Dudiebug@users.noreply.github.com>
+Subject: [PATCH] arm64: dts: qcom: romulus13-spi-touch: own first compatible
+
+Fedora boots aarch64 laptops through a systemd-stub/stubble "dtbloader"
+image that carries every Snapdragon X device tree and picks one by the
+machine's SMBIOS hardware IDs. Stubble compares only the first compatible
+string of each bundled DTB, and both 13.8-inch trees start with
+"microsoft,romulus13", so which one wins depends on build order.
+
+Give the SPI-touchscreen variant "microsoft,romulus13-spi-touch" first.
+The image build maps this machine's hardware IDs to it; the generic
+"microsoft,romulus13" stays second so of_machine_is_compatible() checks
+are unchanged.
+---
+diff --git a/arch/arm64/boot/dts/qcom/x1e80100-microsoft-romulus13-spi-touch.dts b/arch/arm64/boot/dts/qcom/x1e80100-microsoft-romulus13-spi-touch.dts
+index 90e726e65..2ec9d5277 100644
+--- a/arch/arm64/boot/dts/qcom/x1e80100-microsoft-romulus13-spi-touch.dts
++++ b/arch/arm64/boot/dts/qcom/x1e80100-microsoft-romulus13-spi-touch.dts
+@@ -15,7 +15,7 @@
+ 
+ / {
+ 	model = "Microsoft Surface Laptop 7 (13.8 inch, SPI touchscreen)";
+-	compatible = "microsoft,romulus13", "qcom,x1e80100";
++	compatible = "microsoft,romulus13-spi-touch", "microsoft,romulus13", "qcom,x1e80100";
+ };
+ 
+ #include "x1e80100-microsoft-romulus15-touchscreen.dtsi"
