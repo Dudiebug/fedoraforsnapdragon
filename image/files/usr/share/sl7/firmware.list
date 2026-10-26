@@ -1,0 +1,26 @@
+# Microsoft/Qualcomm firmware the Surface Laptop 7 needs and Fedora cannot ship (signed
+# for this machine, not redistributable). Paths are relative to the firmware search
+# path and match firmware-name in the Linux 7.3 device trees (x1e80100-microsoft-
+# romulus.dtsi, patches 0019/0102). sl7-firmware-setup finds each file by its name in
+# the Windows driver store or in Microsoft's driver MSI and installs it under
+# /var/lib/firmware (the kernel's firmware_class.path in this image).
+# A leading "?" marks a file that is copied when found but not required: the .jsn
+# files are only read by the userspace pd-mapper, which the in-kernel one replaces.
+# File list after bryce-hoehn/linux-surface-laptop-7 romulus-firmware-extract.sh.
+
+# GPU zap shader (Adreno X1-85/X1-45)
+qcom/x1e80100/microsoft/qcdxkmsuc8380.mbn
+# Audio DSP: speakers, microphones, battery and USB-C (pmic_glink lives on the ADSP)
+qcom/x1e80100/microsoft/Romulus/qcadsp8380.mbn
+qcom/x1e80100/microsoft/Romulus/adsp_dtbs.elf
+# Compute DSP
+qcom/x1e80100/microsoft/Romulus/qccdsp8380.mbn
+qcom/x1e80100/microsoft/Romulus/cdsp_dtbs.elf
+# Iris video decoder (hardware H.264/HEVC/VP9)
+qcom/x1e80100/microsoft/Romulus/qcvss8380.mbn
+# Protection-domain maps (userspace pd-mapper only)
+?qcom/x1e80100/microsoft/Romulus/adspr.jsn
+?qcom/x1e80100/microsoft/Romulus/adsps.jsn
+?qcom/x1e80100/microsoft/Romulus/adspua.jsn
+?qcom/x1e80100/microsoft/Romulus/battmgr.jsn
+?qcom/x1e80100/microsoft/Romulus/cdspr.jsn

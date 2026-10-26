@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Surface firmware notice
+Comment=Explains how to install the Surface Laptop 7 firmware when it is missing
+Exec=/usr/libexec/sl7/sl7-firmware-notice
+OnlyShowIn=KDE;
+NoDisplay=true
+X-KDE-autostart-phase=2

@@ -1,0 +1,48 @@
+#!/bin/bash
+# Plasma autostart: tells the user what sl7-firmware-setup found, once per state.
+# Reads /var/lib/sl7/firmware.status (written by the boot service): "complete",
+# "reboot <source> <boot id>" or "missing <files...>". Nothing to say when complete.
+set -uo pipefail
+
+STATUS=/var/lib/sl7/firmware.status
+SEEN=${XDG_STATE_HOME:-$HOME/.local/state}/sl7-firmware-notice
+
+# The boot service may still be copying; give it a moment on the first login.
+for _ in {1..30}; do
+  [[ -f $STATUS ]] && break
+  sleep 2
+done
+[[ -f $STATUS ]] || exit 0
+state=$(head -n 1 "$STATUS")
+key="$state $(md5sum < "$STATUS" | cut -c1-12)"
+[[ -f $SEEN && $(< "$SEEN") == "$key" ]] && exit 0
+
+case $state in
+  complete) exit 0 ;;
+  reboot)
+    title='Surface firmware installed'
+    text="The Surface Laptop 7 firmware was installed from: $(sed -n 2p "$STATUS").
+
+Restart once to load it: GPU acceleration, sound, battery status, USB-C and hardware video decode start working after the restart."
+    ;;
+  *)
+    title='Surface firmware missing'
+    text="This laptop needs firmware from Microsoft that Fedora cannot include. Without it there is no GPU acceleration, sound, battery status or USB-C; Wi-Fi works.
+
+It is copied automatically from the Windows partition (unless BitLocker encrypts it), or downloaded from Microsoft (about 500 MB) when an unmetered network is up.
+
+To get it now: connect to Wi-Fi, Ethernet or a USB-tethered phone, open Konsole and run:
+
+    sudo /usr/libexec/sl7/sl7-firmware-setup download
+
+then restart. Details: /usr/share/doc/sl7/FIRMWARE.md"
+    ;;
+esac
+
+if command -v kdialog > /dev/null; then
+  kdialog --title "$title" --msgbox "$text"
+else
+  notify-send --app-name='Surface Laptop 7' --urgency=normal "$title" "$text"
+fi
+mkdir -p "${SEEN%/*}"
+echo "$key" > "$SEEN"

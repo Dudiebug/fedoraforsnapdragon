@@ -1,0 +1,16 @@
+[Unit]
+Description=Surface Laptop 7: install the Microsoft/Qualcomm firmware Fedora cannot ship
+Documentation=file:///usr/share/doc/sl7/FIRMWARE.md
+# Runs next to the desktop, never in front of it: a missing network or Windows copy
+# only means the desktop stays on the framebuffer until the firmware arrives.
+After=network-online.target local-fs.target
+Wants=network-online.target
+ConditionArchitecture=arm64
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/sl7/sl7-firmware-setup auto
+TimeoutStartSec=30min
+
+[Install]
+WantedBy=multi-user.target

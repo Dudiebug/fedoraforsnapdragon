@@ -1,0 +1,182 @@
+#!/bin/bash
+# Installs the Surface Laptop 7 firmware that Fedora cannot ship (firmware.list) into
+# /var/lib/firmware, which the image's kernel searches first (firmware_class.path).
+#   sl7-firmware-setup status          print complete / missing files; exit 1 if missing
+#   sl7-firmware-setup auto            what the boot service runs: nothing if complete,
+#                                      else the Windows partition, else the MSI download
+#                                      if the network is up and not metered
+#   sl7-firmware-setup windows         copy from the Windows driver store (read-only mount)
+#   sl7-firmware-setup download        download Microsoft's driver MSI and unpack it
+#   sl7-firmware-setup msi FILE        unpack an MSI you downloaded yourself
+# The Windows partition is only ever mounted read-only. BitLocker-encrypted partitions
+# are skipped (use download). Nothing under /usr is changed. A reboot loads the files:
+# the DSPs and the GPU ask for their firmware once, early in boot.
+set -Eeuo pipefail
+
+LIST=/usr/share/sl7/firmware.list
+DEST=/var/lib/firmware
+STATE=/var/lib/sl7
+STATUS=$STATE/firmware.status
+# Microsoft's "Surface Laptop, 7th Edition with Snapdragon" driver page; its .msi link
+# changes with every release. The pinned URL is the fallback when the page changes.
+MSI_PAGE='https://www.microsoft.com/en-us/download/details.aspx?id=106120'
+MSI_PINNED='https://download.microsoft.com/download/b7ca2c3f-d320-4795-be0f-529a0117abb4/SurfaceLaptop7_ARM_Win11_26100_26.091.9400.0.msi'
+
+log() { echo "sl7-firmware-setup: $*" >&2; }
+die() { log "$*"; exit 1; }
+
+# "dest required" pairs from firmware.list.
+entries() {
+  local line
+  while read -r line; do
+    [[ -z $line || $line == \#* ]] && continue
+    if [[ $line == \?* ]]; then echo "${line#\?} 0"; else echo "$line 1"; fi
+  done < "$LIST"
+}
+
+present() {
+  local f
+  for f in "$DEST/$1" "/usr/lib/firmware/$1" "/usr/lib/firmware/$1.xz" "/usr/lib/firmware/$1.zst"; do
+    [[ -s $f ]] && return 0
+  done
+  return 1
+}
+
+missing_required() {
+  local dest req
+  while read -r dest req; do
+    ((req)) && ! present "$dest" && echo "$dest"
+  done < <(entries)
+  return 0
+}
+
+write_status() {
+  mkdir -p "$STATE"
+  printf '%s\n' "$@" > "$STATUS"
+}
+
+# Copy every listed file found under $1 (by file name) into $DEST. Several driver
+# versions can sit side by side in the driver store: the newest copy wins.
+install_from_tree() {
+  local tree=$1 dest req name src copied=0
+  while read -r dest req; do
+    name=${dest##*/}
+    src=$(find "$tree" -type f -iname "$name" -printf '%T@ %p\n' 2> /dev/null | sort -rn | head -n 1 | cut -d' ' -f2-)
+    if [[ -z $src ]]; then
+      ((req)) && log "not found: $name"
+      continue
+    fi
+    install -D -m 0644 "$src" "$DEST/$dest"
+    log "installed $dest (from ${src#"$tree"/})"
+    copied=$((copied + 1))
+  done < <(entries)
+  ((copied > 0))
+}
+
+finish() {
+  local missing
+  missing=$(missing_required)
+  if [[ -n $missing ]]; then
+    write_status missing $missing
+    log "still missing: ${missing//$'\n'/ }"
+    return 1
+  fi
+  restorecon -R "$DEST" 2> /dev/null || true
+  # Line 3: the boot that installed it; the first later boot marks it complete.
+  write_status reboot "$1" "$(< /proc/sys/kernel/random/boot_id)"
+  log "firmware complete ($1); reboot to load it"
+}
+
+from_windows() {
+  local dev type mnt found=1
+  modprobe ntfs3 2> /dev/null || true
+  # NTFS partitions with the Microsoft basic data GUID, on any disk.
+  while read -r dev type; do
+    [[ $type == ebd0a0a2-b9e5-4433-87c0-68b6b72699c7 ]] || continue
+    case $(blkid -o value -s TYPE "$dev" 2> /dev/null) in
+      ntfs) ;;
+      BitLocker) log "$dev is BitLocker-encrypted; skipping it (use: sl7-firmware-setup download)"; continue ;;
+      *) continue ;;
+    esac
+    mnt=$(mktemp -d /run/sl7-windows.XXXXXX)
+    if ! mount -t ntfs3 -o ro,nodev,nosuid,noexec "$dev" "$mnt" 2> /dev/null; then
+      log "could not mount $dev read-only"
+      rmdir "$mnt"
+      continue
+    fi
+    local store=$mnt/Windows/System32/DriverStore/FileRepository
+    if [[ -d $store ]]; then
+      log "copying from the Windows driver store on $dev"
+      install_from_tree "$store" && found=0
+    fi
+    umount "$mnt"
+    rmdir "$mnt"
+    ((found == 0)) && break
+  done < <(lsblk -rnpo PATH,PARTTYPE)
+  ((found == 0)) || return 1
+  finish "Windows partition"
+}
+
+from_msi() {
+  local msi=$1 work
+  command -v msiextract > /dev/null || die 'msiextract is missing (msitools)'
+  work=$(mktemp -d /var/tmp/sl7-msi.XXXXXX)
+  log "unpacking $msi"
+  msiextract -C "$work" "$msi" > /dev/null
+  install_from_tree "$work" || { rm -rf "$work"; return 1; }
+  rm -rf "$work"
+  finish "driver MSI ${msi##*/}"
+}
+
+download() {
+  local url work rc=0
+  url=$(curl -fsSL -A 'Mozilla/5.0 (Windows NT 10.0)' "$MSI_PAGE" 2> /dev/null \
+    | grep -oE 'https://download\.microsoft\.com/[^"]+SurfaceLaptop7_ARM_Win11_[^"]+\.msi' | sort -V | tail -n 1) || true
+  url=${url:-$MSI_PINNED}
+  work=$(mktemp -d /var/tmp/sl7-dl.XXXXXX)
+  log "downloading $url (about 500 MB)"
+  curl -fL --retry 3 -o "$work/${url##*/}" "$url" || { rm -rf "$work"; die 'download failed'; }
+  from_msi "$work/${url##*/}" || rc=$?
+  rm -rf "$work"
+  return $rc
+}
+
+online_unmetered() {
+  command -v nm-online > /dev/null && nm-online -q -t 60 || return 1
+  # GENERAL.METERED is "yes" / "yes (guessed)" for phones and mobile data.
+  ! nmcli -t -f GENERAL.METERED device show 2> /dev/null | grep -q ':yes'
+}
+
+cmd=${1:-status}
+[[ $cmd == status ]] || [[ $EUID -eq 0 ]] || die 'run as root (sudo)'
+case $cmd in
+  status)
+    missing=$(missing_required)
+    if [[ -z $missing ]]; then echo complete; exit 0; fi
+    printf 'missing: %s\n' $missing
+    exit 1
+    ;;
+  auto)
+    if [[ -z $(missing_required) ]]; then
+      boot_id=$(< /proc/sys/kernel/random/boot_id)
+      if [[ ! -f $STATUS ]] || { [[ $(head -n 1 "$STATUS") == reboot ]] && [[ $(sed -n 3p "$STATUS") != "$boot_id" ]]; }; then
+        write_status complete
+      fi
+      exit 0
+    fi
+    from_windows && exit 0
+    if online_unmetered; then
+      download && exit 0
+    else
+      log 'no Windows copy and no unmetered network; not downloading'
+    fi
+    finish none || true
+    ;;
+  windows) from_windows ;;
+  download) download ;;
+  msi)
+    [[ -f ${2:-} ]] || die 'usage: sl7-firmware-setup msi FILE'
+    from_msi "$2"
+    ;;
+  *) die "unknown command $cmd (status, auto, windows, download, msi FILE)" ;;
+esac
