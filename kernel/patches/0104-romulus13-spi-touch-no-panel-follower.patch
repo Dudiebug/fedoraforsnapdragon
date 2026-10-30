@@ -1,0 +1,30 @@
+From: fedoraforsnapdragon <52586739+Dudiebug@users.noreply.github.com>
+Subject: [PATCH] arm64: dts: qcom: romulus13-spi-touch: power the touchscreen at probe
+
+The 15-inch GPIO power description (patches/0005) links the GTCH
+touchscreen to the eDP panel, and spi-hid (patches/0004) then powers it
+only when the display driver enables that panel. At the 13.8-inch unit's
+first boot the display stayed on the UEFI framebuffer (msm never took
+over), so the touchscreen was never powered and stayed silent.
+
+Drop the panel link on the 13.8-inch SPI-touchscreen tree: spi-hid then
+powers and resets the GTCH at probe and handles system sleep itself, as
+it does for the touchpad. The 15-inch tree keeps the link. Restore it
+here once msm drives this panel and the touchscreen answers.
+---
+diff --git a/arch/arm64/boot/dts/qcom/x1e80100-microsoft-romulus13-spi-touch.dts b/arch/arm64/boot/dts/qcom/x1e80100-microsoft-romulus13-spi-touch.dts
+--- a/arch/arm64/boot/dts/qcom/x1e80100-microsoft-romulus13-spi-touch.dts
++++ b/arch/arm64/boot/dts/qcom/x1e80100-microsoft-romulus13-spi-touch.dts
+@@ -33,3 +33,12 @@ &iris {
+
+ 	status = "okay";
+ };
++
++/*
++ * Power the touchscreen at probe instead of following the eDP panel: on this
++ * unit the display driver has not taken over yet, and a follower is then never
++ * powered. The 15-inch tree keeps the panel link.
++ */
++&gtch {
++	/delete-property/ panel;
++};

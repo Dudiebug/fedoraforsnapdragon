@@ -42,8 +42,15 @@ depmod -a "$kver"
 dnf -y install "$rpms"/iptsd-[0-9]*.aarch64.rpm \
   mesa-dri-drivers mesa-vulkan-drivers vulkan-tools glx-utils \
   alsa-ucm iio-sensor-proxy plasma-keyboard plasma-setup \
-  gamescope msitools kdialog libnotify
+  gamescope msitools kdialog libnotify \
+  pciutils util-linux libinput-utils atheros-firmware
 dnf clean all
+
+# Wi-Fi firmware comes from Fedora (atheros-firmware), not from sl7-firmware-setup:
+# without it the laptop has no network to fetch anything else.
+for f in amss.bin m3.bin board-2.bin; do
+  compgen -G "/usr/lib/firmware/ath12k/WCN7850/hw2.0/$f*" > /dev/null || die "ath12k/WCN7850/hw2.0/$f is missing (atheros-firmware)"
+done
 
 # 3. Initramfs: generic (--no-hostonly), with the SL7 additions and omissions from
 #    /usr/lib/dracut/dracut.conf.d/50-sl7.conf.

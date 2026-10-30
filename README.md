@@ -6,12 +6,14 @@ device tree `x1e80100-microsoft-romulus13-spi-touch`). It is a bootc image: it
 updates atomically with `bootc upgrade` and the previous version stays in the boot
 menu to roll back to.
 
-**Status: built, not yet booted on the laptop.** See [docs/TESTING.md](docs/TESTING.md)
-for the checklist and [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md).
+**Status: the installer ISO has booted on the laptop once** (keyboard, touchpad and
+display up; Wi-Fi and the touchscreen fixed since, untested). See
+[docs/TESTING.md](docs/TESTING.md) for the checklist and
+[docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md).
 
 | Piece | Where | What |
 |---|---|---|
-| Kernel | [kernel/](kernel/) | Fedora's own kernel SRPM (7.3.0-65) rebuilt with the SL7 patch series and [config.fragment](kernel/config.fragment); release tag `.sl7` (`7.3.0-65.sl7.fc44.aarch64`) |
+| Kernel | [kernel/](kernel/) | Fedora's own kernel SRPM (7.3.0-65) rebuilt with the SL7 patch series and [config.fragment](kernel/config.fragment); release tag `.sl7.1` (`7.3.0-65.sl7.1.fc44.aarch64`) |
 | Device tree | [kernel/patches/](kernel/patches/) | Fedora's dtbloader image (stubble) picks the tree by SMBIOS hardware ID; this SKU gets `romulus13-spi-touch`, never chosen on the laptop |
 | Touchpad | [iptsd/](iptsd/) | alex-lentz's iptsd fork (haptic force click) as an RPM |
 | Image | [image/](image/) | `FROM quay.io/fedora-ostree-desktops/kinoite:44`, kernel swapped, packages, initramfs, services |
@@ -28,11 +30,12 @@ prepares (CI also checks it against kernel.org's 7.3):
 
 | Patches | From | Purpose |
 |---|---|---|
-| 0001-0027 | [ItsLucas/surface-laptop-7-ubuntu-kernel](https://github.com/ItsLucas/surface-laptop-7-ubuntu-kernel) r15 (GPL-2.0) | ath12k rfkill workaround, the HID-over-SPI transport and its robustness fixes, GTCH SPI touchscreen, panel power, posture events, Iris on 15", QCE |
+| 0001-0027 | [ItsLucas/surface-laptop-7-ubuntu-kernel](https://github.com/ItsLucas/surface-laptop-7-ubuntu-kernel) r15 (GPL-2.0) | ath12k rfkill workaround (here extended to the 13.8"), the HID-over-SPI transport and its robustness fixes, GTCH SPI touchscreen, panel power, posture events, Iris on 15", QCE |
 | 0100 | fQwQf (linux-input), via [1Martin11/surface-laptop-7-fedora](https://github.com/1Martin11/surface-laptop-7-fedora) | 13.8" I2C touchscreen (ITCH) |
 | 0101 | [CouchLiteOS](https://github.com/Dudiebug/couchliteos) `arm64-sl7` | 13.8" touchpad wiring, the `romulus13-spi-touch` DTB |
 | 0102 | this repo | Iris video codec on both 13.8" trees (drop it if Iris misbehaves) |
 | 0103 | this repo | `microsoft,romulus13-spi-touch` as that tree's first compatible, so dtbloader can select it |
+| 0104 | this repo | 13.8" touchscreen powered at probe instead of following the eDP panel |
 
 The speaker volume limit is upstream since 7.3; the kernel build fails if it ever
 disappears. Firmware file list after bryce-hoehn's

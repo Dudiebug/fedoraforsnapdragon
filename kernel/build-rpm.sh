@@ -179,6 +179,13 @@ for dtb in x1e80100-microsoft-romulus13 x1e80100-microsoft-romulus13-spi-touch; 
   [[ $(fdtget "$qcom/$dtb.dtb" /soc@0/video-codec@aa00000 status) == okay ]] \
     || die "Iris is not enabled in $dtb.dtb (patches/0102)"
 done
+# The GTCH touchscreen follows the eDP panel on the 15-inch only (patches/0005, 0104).
+gtch_panel() {
+  dtc -q -I dtb -O dts "$qcom/$1.dtb" \
+    | awk '/touchscreen@0 \{/ { n = 1 } n && /panel = / { f = 1 } n && /\};/ { n = 0 } END { exit !f }'
+}
+gtch_panel x1e80100-microsoft-romulus15 || die 'romulus15.dtb lost the touchscreen panel link (patches/0005)'
+gtch_panel x1e80100-microsoft-romulus13-spi-touch && die 'romulus13-spi-touch.dtb still links the touchscreen to the panel (patches/0104)'
 
 efi=$mod/vmlinuz-dtbloader.efi
 [[ -s $efi ]] || die 'no vmlinuz-dtbloader.efi'

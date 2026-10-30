@@ -1,0 +1,128 @@
+#!/bin/bash
+# Collects what is needed to debug the Surface Laptop 7 hardware into one tarball.
+#   sudo sl7-report          write it to a plugged-in USB stick (not the one booted from)
+#   sudo sl7-report DIR      write it to DIR instead
+# Logs, drivers, device tree, GPIO and touch state, Wi-Fi and rfkill. Never ACPI tables:
+# the MSDM table holds the Windows product key. The kernel log does carry MAC addresses
+# and serial numbers; look before you share it publicly.
+set -uo pipefail
+
+log() { echo "sl7-report: $*" >&2; }
+die() { log "$*"; exit 1; }
+
+[[ $EUID -eq 0 ]] || die 'run as root (sudo)'
+
+name=sl7-report-$(date +%Y%m%d-%H%M%S)
+work=$(mktemp -d /tmp/sl7-report.XXXXXX)
+mnt=
+cleanup() {
+  [[ -n $mnt ]] && { umount "$mnt" 2> /dev/null; rmdir "$mnt" 2> /dev/null; }
+  rm -rf "$work"
+}
+trap cleanup EXIT
+out=$work/$name
+mkdir -p "$out"
+
+# run FILE CMD...: output and exit status of CMD into FILE; a missing tool is noted.
+run() {
+  local file=$1
+  shift
+  { echo "\$ $*"; "$@" 2>&1; echo "[exit $?]"; } > "$out/$file" 2>&1
+}
+# show FILE PATH...: each readable sysfs/proc file with its name.
+show() {
+  local file=$1 p
+  shift
+  for p in "$@"; do
+    [[ -r $p ]] || continue
+    printf '%s: %s\n' "$p" "$(tr '\0' ' ' < "$p" 2> /dev/null)"
+  done > "$out/$file"
+}
+
+log 'collecting'
+show system.txt /sys/firmware/devicetree/base/model /sys/firmware/devicetree/base/compatible \
+  /proc/cmdline /proc/version
+run uname.txt uname -a
+run bootc.txt bootc status
+run dmesg.txt dmesg
+run journal.txt journalctl -b --no-pager
+run journal-prev.txt journalctl -b -1 --no-pager -n 3000
+run failed.txt systemctl --failed --no-pager
+run lsmod.txt lsmod
+run lspci.txt lspci -nnk
+run lsusb.txt lsusb
+run lsblk.txt lsblk -o NAME,TRAN,RM,SIZE,TYPE,FSTYPE,MOUNTPOINTS
+
+# Wi-Fi
+run rfkill.txt rfkill list
+run nmcli-radio.txt nmcli radio
+run nmcli-device.txt nmcli device
+run nmcli-wifi.txt nmcli device wifi list --rescan yes
+run fw-ath12k.txt ls -l /usr/lib/firmware/ath12k/WCN7850/hw2.0
+run fw-sl7.txt /usr/libexec/sl7/sl7-firmware-setup status
+run fw-sl7-journal.txt journalctl -b -u sl7-firmware-setup --no-pager
+
+# Display and touch
+run drm.txt ls -l /sys/class/drm
+show drm-status.txt /sys/class/drm/*/status /sys/class/drm/*/enabled
+show spi.txt /sys/bus/spi/devices/*/modalias /sys/bus/spi/devices/*/power_state \
+  /sys/bus/spi/devices/*/ready /sys/bus/spi/devices/*/bus_error_count \
+  /sys/bus/spi/devices/*/device_initiated_reset_count
+run spi-drivers.txt ls -l /sys/bus/spi/devices/ /sys/bus/spi/drivers/
+run interrupts.txt cat /proc/interrupts
+run libinput.txt libinput list-devices
+run input.txt cat /proc/bus/input/devices
+run iptsd.txt systemctl status 'iptsd@*' --no-pager
+run regulators.txt cat /sys/kernel/debug/regulator/regulator_summary
+
+# GPIO: the touchscreen's rail (gpio64), reset (gpio48) and interrupt (gpio51).
+mountpoint -q /sys/kernel/debug || mount -t debugfs debugfs /sys/kernel/debug 2> /dev/null
+run gpio.txt cat /sys/kernel/debug/gpio
+for d in /sys/kernel/debug/pinctrl/*tlmm* /sys/kernel/debug/pinctrl/*pinctrl*; do
+  [[ -r $d/pinconf-pins ]] || continue
+  run "pinconf-${d##*/}.txt" cat "$d/pinconf-pins"
+  run "pinmux-${d##*/}.txt" cat "$d/pinmux-pins"
+done
+run devices-deferred.txt cat /sys/kernel/debug/devices_deferred
+
+tar -C "$work" -czf "$work/$name.tar.gz" "$name" || die 'could not pack the report'
+
+# Where to: DIR, or the first USB stick partition that is not behind / or /sysroot.
+dest=${1:-}
+part=
+if [[ -z $dest ]]; then
+  # Disks behind the running system (ostree's /sysroot, the ISO's live medium).
+  boot_disks=()
+  for m in / /sysroot /run/initramfs/live; do
+    src=$(findmnt -no SOURCE "$m" 2> /dev/null | sed 's/\[.*//')
+    [[ -b $src ]] || continue
+    boot_disks+=("$(lsblk -npo PKNAME "$src" 2> /dev/null | head -n 1)")
+  done
+  # lsblk -P: KEY="value" pairs, so empty columns (TRAN on partitions) stay in place.
+  val() { [[ $line =~ (^|\ )$1=\"([^\"]*)\" ]] && echo "${BASH_REMATCH[2]}"; }
+  while read -r line; do
+    [[ $(val TYPE) == part ]] || continue
+    disk=$(val PKNAME)
+    fstype=$(val FSTYPE)
+    [[ $(lsblk -ndo TRAN "$disk" 2> /dev/null) == usb ]] || continue
+    for b in "${boot_disks[@]}"; do [[ $disk == "$b" ]] && continue 2; done
+    case $fstype in vfat | exfat | ntfs | ext4 | ext3 | ext2 | xfs | btrfs) ;; *) continue ;; esac
+    part=$(val PATH)
+    dest=$(val MOUNTPOINT)
+    break
+  done < <(lsblk -Pnpo PATH,PKNAME,TYPE,FSTYPE,MOUNTPOINT)
+  [[ -n $part ]] || die "no USB stick found besides the boot disk; plug one in, or give a directory: sudo $0 DIR"
+  if [[ -z $dest ]]; then
+    mnt=$(mktemp -d /run/sl7-report.XXXXXX)
+    if [[ $fstype == ntfs ]]; then mount -t ntfs3 "$part" "$mnt"; else mount "$part" "$mnt"; fi \
+      || die "could not mount $part"
+    dest=$mnt
+  fi
+  log "writing to $part"
+fi
+[[ -d $dest ]] || die "$dest is not a directory"
+cp "$work/$name.tar.gz" "$dest/" || die "could not write to $dest"
+sync
+log "wrote $name.tar.gz to ${part:-$dest}"
+[[ -n $mnt ]] && log 'unmounting; the stick can be removed'
+exit 0

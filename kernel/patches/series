@@ -1,4 +1,4 @@
-0001-ath12k-romulus15-rfkill-workaround.patch
+0001-ath12k-sl7-rfkill-workaround.patch
 0002-romulus15-qspi-touchpad.patch
 0003-romulus15-gtch-spi-touchscreen.patch
 0004-spi-hid-power-lifecycle.patch
@@ -26,3 +26,4 @@
 0101-romulus13-touchpad-and-spi-touchscreen-variant.patch
 0102-romulus13-enable-iris.patch
 0103-romulus13-spi-touch-own-compatible.patch
+0104-romulus13-spi-touch-no-panel-follower.patch

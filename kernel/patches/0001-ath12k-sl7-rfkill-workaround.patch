@@ -1,10 +1,13 @@
-Subject: [PATCH] wifi: ath12k: avoid hard rfkill on Surface Laptop 7 15-inch
+Subject: [PATCH] wifi: ath12k: avoid hard rfkill on the Surface Laptop 7
 
 Port the Surface Laptop 7 rfkill workaround to Ubuntu linux 7.2.0-5.5.
-The WCN7850 initializes successfully on the Romulus15 board but reports a
-persistent hardware block after firmware rfkill configuration.
+The WCN7850 initializes successfully on the Romulus boards but reports a
+persistent hardware block after firmware rfkill configuration. Seen on
+the 15-inch, and on the 13.8-inch (X1P64100) at its first Linux boot:
+the adapter is listed but cannot be switched on.
 
-Skip that configuration only for WCN7850 hw2.0 on microsoft,romulus15.
+Skip that configuration only for WCN7850 hw2.0 on microsoft,romulus15
+and microsoft,romulus13 (both 13.8-inch trees carry that compatible).
 Keep the existing capability and ACPI checks and preserve normal rfkill
 handling on other boards. No public data structures or exports change.
 
@@ -15,17 +18,18 @@ This is a local workaround pending a proper platform rfkill fix.
 ---
 --- a/drivers/net/wireless/ath/ath12k/core.c
 +++ b/drivers/net/wireless/ath/ath12k/core.c
-@@ -80,6 +80,13 @@
+@@ -80,6 +80,14 @@
  	if (ath12k_acpi_get_disable_rfkill(ab))
  		return 0;
- 
-+	/* Avoid the persistent hard block after rfkill setup on this board. */
+
++	/* Avoid the persistent hard block after rfkill setup on these boards. */
 +	if (ab->hw_rev == ATH12K_HW_WCN7850_HW20 &&
-+	    of_machine_is_compatible("microsoft,romulus15")) {
++	    (of_machine_is_compatible("microsoft,romulus15") ||
++	     of_machine_is_compatible("microsoft,romulus13"))) {
 +		ath12k_info(ab, "applying Surface Laptop 7 rfkill workaround\n");
 +		return 0;
 +	}
 +
  	for (i = 0; i < ab->num_radios; i++) {
  		ar = ab->pdevs[i].ar;
- 
+
