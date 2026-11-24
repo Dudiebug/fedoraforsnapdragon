@@ -143,6 +143,7 @@ jobs:
           df -h /
       - uses: actions/upload-artifact@v7
         with:
+          retention-days: 3
           name: kernel-rpms
           path: |
             kernel/out/*.rpm
@@ -188,6 +189,7 @@ jobs:
           echo "${{ needs.versions.outputs.iptsd_inputs }}" > iptsd/out/inputs.sha256
       - uses: actions/upload-artifact@v7
         with:
+          retention-days: 3
           name: iptsd-rpms
           path: |
             iptsd/out/*.rpm
@@ -293,6 +295,7 @@ jobs:
           (cd out && sha256sum "$name.xz" > "$name.xz.sha256" && cat "$name.xz.sha256")
       - uses: actions/upload-artifact@v7
         with:
+          retention-days: 3
           name: sl7-kinoite-raw
           path: |
             out/*.raw.xz
@@ -339,6 +342,7 @@ jobs:
           (cd out && sha256sum "$name" > "$name.sha256" && cat "$name.sha256" && ls -lh "$name")
       - uses: actions/upload-artifact@v7
         with:
+          retention-days: 3
           name: sl7-kinoite-installer-iso
           path: |
             out/*.iso
